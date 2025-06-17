@@ -1,3 +1,4 @@
+name: seekdeep_amplicon_visualization
 channels:
   - conda-forge
   - bioconda
