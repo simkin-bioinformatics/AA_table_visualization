@@ -5,7 +5,6 @@ import pandas as pd
 import plotly.express as px
 import warnings
 warnings.filterwarnings('ignore')
-from ipywidgets import interact, interactive, fixed, interact_manual
 import ipywidgets as widgets
 import yaml
 import json
@@ -16,44 +15,22 @@ import PCA
 import math
 import subprocess
 
-def get_mutation_counts(mutation_count_file):
+def get_mutation_counts(mutation_count_file, mutation_coverage_file):
 	mutation_counts = pd.read_csv(mutation_count_file,
 								  header=list(range(6)),
 								  index_col=0)
-	return mutation_counts
-
-def get_mutation_coverage(mutation_coverage_file):
 	mutation_coverage = pd.read_csv(mutation_coverage_file,
 									index_col=0,
 									header=list(range(6)))
-	return mutation_coverage
-
-def filter_mutations(mutation_count_file):
-	mutation_counts = get_mutation_counts(mutation_count_file)
-	all_columns=mutation_counts.keys()
+	all_columns=list(mutation_counts.keys())
 	mutation_dict={column[2]:column_number for column_number, column in enumerate(all_columns) if column[3]=='missense_variant'}
 	filtered_mutations=list(mutation_dict.keys())
-	return filtered_mutations
+	return all_columns, mutation_dict, filtered_mutations, mutation_counts, mutation_coverage
 
 def get_metadata_columns(metadata_table):
 	metadata = pd.read_csv(metadata_table, sep='\t')
 	columns = list(metadata.keys())
 	return columns
-
-def generate_sample_summary_dropdowns(metadata_table):
-	metadata_columns = get_metadata_columns(metadata_table)
-	sample_column = widgets.Dropdown(
-		options=metadata_columns,
-		# value='Sample_ID',
-		description='Sample:',
-		disabled=False,
-	)
-	summary_column = widgets.Dropdown(
-		options=metadata_columns,
-		description='Summary:',
-		disabled=False,
-	)
-	return sample_column, summary_column
 
 def generate_country_dropdown():
 	country_shortcuts={
@@ -73,16 +50,15 @@ def generate_country_dropdown():
 			'zoom': 5.2
 		},
 	}
-	countries = list(country_shortcuts.keys())
-	countries.append('custom')
+
 	country = widgets.Dropdown(
-		options=countries,
+		options=country_shortcuts.keys(),
 		description='Country:',
 		disabled=False,
 	)
 	return country, country_shortcuts
 
-
+# RUN
 def special_sort(mutations):
 	'''
 	Intersects the variants of interest with observed mutations from the AA tables
@@ -96,7 +72,7 @@ def special_sort(mutations):
 		sorting_list.append([gene, pos, mutation]) #sort by position
 	return [item[-1] for item in sorted(sorting_list)] #return original mutation names, but now sorted by position
 
-def create_prevalences_input_table(mutations_of_interest, wdir, min_count, min_coverage, min_freq, mutation_count_file, mutation_coverage_file):
+def create_prevalences_input_table(mutations_of_interest, mutation_dict, all_columns, mutation_counts, mutation_coverage, wdir, min_count, min_coverage, min_freq):
 	'''
 	import the PCA module which has genotype calling and
 	filtering functions - outputs filtered AA tables, genotypes, and within sample allele frequencies to list only the samples
@@ -104,10 +80,6 @@ def create_prevalences_input_table(mutations_of_interest, wdir, min_count, min_c
 	'''
 
 	subprocess.call(['mkdir', '-p', wdir])
-	mutation_counts = get_mutation_counts(mutation_count_file)
-	mutation_coverage = get_mutation_coverage(mutation_coverage_file)
-	all_columns=mutation_counts.keys()
-	mutation_dict={column[2]:column_number for column_number, column in enumerate(all_columns) if column[3]=='missense_variant'}
 
 	#write only the desired mutations of interest to a new dataframe and output csv file
 	mutations_of_interest=special_sort(mutations_of_interest)
@@ -142,6 +114,7 @@ def create_prevalences_input_table(mutations_of_interest, wdir, min_count, min_c
 	freq = gt_calls["wsaf"]
 	freq.to_csv(os.path.join(
 			wdir, "within_sample_allele_frequencies.csv"))
+	freq.head()
 
 	# This step outputs a genotypes table, using the wsaf table as input. Cells can be NaN (coverage is below the
 	# threshold), 0 (frequency of the mutation is less than or equal to min_freq), 1 (frequency is bigger than min_freq but
@@ -172,27 +145,23 @@ def calculate_prevalences(wdir, metadata_file, sample_column, summary_column, mu
 	'''
 	output_summary_table = os.path.join(wdir, 'prevalence_summary.tsv')
 	prevalences_input_table = os.path.join(wdir, 'prevalences_input_table.csv')
+	# print('sample column is', sample_column)
+	# print('summary column is', summary_column)
+	first_line=open(metadata_file).readline()
+	# print('first line of metadata file is', first_line)
 
-	cap.calculate_prevalences(
-		metadata_file,
-		prevalences_input_table,
-		mutations_of_interest,
-		output_summary_table, 
-		sample_column, 
-		summary_column
-	)
-
-	prevalences=pd.read_csv(
-		output_summary_table,
-		header=list(range(1)),
-		index_col=0, sep='\t'
-	)
-
+	cap.calculate_prevalences(metadata_file,
+						  prevalences_input_table,
+						  mutations_of_interest,
+						  output_summary_table, sample_column, summary_column)
+	prevalences=pd.read_csv(output_summary_table,
+							  header=list(range(1)),
+							  index_col=0, sep='\t')
 	return prevalences
 
-def make_detail_graph(variant, wdir, zoom_level, latitude, longitude):
+
+def make_detail_graph(variant, summary_column, wdir, zoom_level, latitude, longitude):
 	df = pd.read_csv(os.path.join(wdir, "prevalence_summary.tsv"), sep='\t')
-	summary_column = df.columns[0]
 	if variant in list(df)[3:]:
 		df["prevalence"] = df[variant].str.split(" ").str[0].astype(float)
 		#df["prevalence_percent"] = df["prevalence"]*100+1
@@ -239,30 +208,6 @@ def make_detail_graph(variant, wdir, zoom_level, latitude, longitude):
 		)
 	)
 	return fig
-
-def make_a_plot(sample_col, summary_col, variant, country, country_shortcuts, output_folder, metadata_table, mutations_of_interest, zoom, center_lat, center_long):
-	calculate_prevalences(
-		output_folder,
-		metadata_table, 
-		sample_col, 
-		summary_col, 
-		mutations_of_interest
-	)
-	if country != 'custom':
-		zoom_level=country_shortcuts[country]['zoom']
-		latitude=country_shortcuts[country]['lat']
-		longitude=country_shortcuts[country]['lon']
-	if country == 'custom':
-		zoom_level = float(zoom)
-		latitude = float(center_lat)
-		longitude = float(center_long)
-	fig = make_detail_graph(variant, output_folder, zoom_level, latitude, longitude)
-	fig.show()
-	
-	title_string=f'{variant}_{summary_col}'
-	fig.write_image(os.path.join(output_folder, title_string+'.svg'))
-	fig.write_image(os.path.join(output_folder, title_string+'.png'))
-	fig.write_html(os.path.join(output_folder, title_string+'.html'))
 
 def get_countries_from_geojson():
 	geojson_file = 'input/geojson_files/ne_adm0_10m.geojson'
