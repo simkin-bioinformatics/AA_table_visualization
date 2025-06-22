@@ -386,6 +386,7 @@ def create_static_maps(
 	)
 
 	fig.update_layout(
+		width=800, height=600,
 		margin=dict(l=10, r=10, t=10, b=10),
 		title=dict(text=title_text, font=dict(size=title_size), automargin=True, yref='paper')
 	)
@@ -393,6 +394,6 @@ def create_static_maps(
 	subprocess.call(['mkdir', '-p', os.path.join(wdir, 'static_svg_files')])
 	fig.write_image(os.path.join(wdir, 'static_svg_files', variant_of_interest+".svg"))
 	fig.write_image(os.path.join(wdir, 'static_svg_files', variant_of_interest+".png"))
-	# fig.write_image(os.path.join(wdir, 'static_svg_files', variant_of_interest+".html"))
+	fig.write_html(os.path.join(wdir, 'static_svg_files', variant_of_interest+".html"))
 
 	return fig
