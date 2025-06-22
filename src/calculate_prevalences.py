@@ -13,7 +13,7 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 		'''
 		summarize_dict = {}
 		for line_number, line in enumerate(open(metadata_file)):
-			line = line.strip().split(',')
+			line = line.strip().split('\t')
 			if line_number==0:
 				sample_column = line.index(sample_column)
 				summarize_column = line.index(summarize_column)

@@ -1,0 +1,15 @@
+name: seekdeep_amplicon_visualization
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - jupyterlab
+  - plotly
+  - numpy
+  - ipywidgets
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - pip:
+    - kaleido
+  
