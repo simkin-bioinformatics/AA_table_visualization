@@ -31,6 +31,7 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 		count_dict, coord_dict = {}, {}
 		count_dict.setdefault('overall', {})
 		base, top = 0, 0
+		found_samples=False
 		for line_number, line in enumerate(open(prevalences_input_table, 'r')):
 			if "Mutation Name" in line:
 				mutations_list = line.strip().split(',')[1:]
@@ -43,6 +44,7 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 				sample = line[0]
 				sample_tallies = line[1:]
 				if sample in summary_dict:
+					found_samples=True
 					location, latitude, longitude = summary_dict[sample]
 					coord_dict.setdefault(location, [[],[]])
 					count_dict.setdefault(location, {})
@@ -61,6 +63,12 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 							if tally_float>0:
 								count_dict[location][mutation][0] += tally_float
 								count_dict['overall'][mutation][0] += tally_float
+		if not found_samples:
+			raise Exception('ERROR: none of the samples from your metadata'
+				' sample column are present in your AA tables. Are you sure you'
+				' have the correct sample column specified in the sample column'
+				' dropdown? Otherwise, you will need to edit your metadata file'
+				' to have the same sample names as those seen in your AA table')
 		return count_dict, coord_dict
 
 	def parse_counts(count_dict, found_mutations, location, output_line):

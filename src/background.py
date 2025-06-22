@@ -241,6 +241,9 @@ def make_detail_graph(variant, wdir, zoom_level, latitude, longitude):
 	return fig
 
 def make_a_plot(sample_col, summary_col, variant, country, country_shortcuts, output_folder, metadata_table, mutations_of_interest, zoom, center_lat, center_long):
+	global global_summary
+	global_summary=summary_col
+	print('inside function global_summary is', global_summary)
 	calculate_prevalences(
 		output_folder,
 		metadata_table, 
