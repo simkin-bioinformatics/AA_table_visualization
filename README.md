@@ -1,4 +1,24 @@
 # AA table visualization
+This pipeline is for filtering, summarizing, and visualizing amino acid changes
+that have occurred across a dataset.
+
+## Inputs and Outputs:
+This program takes as input three tables with samples as rows,
+mutations as columns, and read counts at the intersections, where read counts
+represent coverage, reference count, or alternate count, respectively, in each
+of the three tables. 
+
+A fourth table gives GPS coordinates where each sample was
+collected, as well as a geographic label to use for aggregating samples (e.g.
+aggregating samples that came from the same city, county, region, district, or
+health facility together and counting the number of samples from the location
+that had a mutation divided by the total number of samples that had sequencing
+data available).
+
+This program outputs an interactive html file that can be zoomed or panned as
+needed, with the ability to hover over locations and see the prevalence of a
+mutation at each location. The program also exports svg files suitable for
+publication.
 
 ## Installation:
 
