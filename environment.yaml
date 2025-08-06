@@ -1,4 +1,4 @@
-name: seekdeep_amplicon_visualization
+name: aa_table_visualization
 channels:
   - conda-forge
   - bioconda
