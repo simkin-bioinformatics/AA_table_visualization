@@ -1,4 +1,4 @@
-# amplicon visualization
+# AA table visualization
 
 ## Installation:
 
@@ -14,9 +14,9 @@ The relevant command is here:
 ```
 2. You can obtain a copy of this git repository with this command:
 ```bash
-git clone https://github.com/simkin-bioinformatics/seekdeep_amplicon_visualization.git
+git clone https://github.com/simkin-bioinformatics/AA_table_visualization.git
 ```
-3. After changing directory to the cloned seekdeep_amplicon_visualization folder,
+3. After changing directory to the cloned AA_table_visualization folder,
 you can cd into the folder (if you're unsure whether you're in the correct
 folder, make sure the folder you cd into contains an environment.yaml file) and
 run this command to build a conda environment that contains all package
@@ -30,7 +30,7 @@ mamba env create -f environment.yaml
 static image graphing step). Install chrome for plotly by activating your
 environment and running the included install script:
 ```bash
-mamba activate seekdeep_amplicon_visualization
+mamba activate aa_table_visualization
 ```
 ```bash
 plotly_get_chrome
@@ -46,7 +46,7 @@ health facility names)
 
 1. activate the environment with:
 ```bash
-mamba activate seekdeep_amplicon_visualization
+mamba activate aa_table_visualization
 ```
 
 2. Launch the jupyter notebook with:
