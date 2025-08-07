@@ -1,6 +1,10 @@
 # AA table visualization
 This pipeline is for filtering, summarizing, and visualizing amino acid changes
-that have occurred across a dataset.
+that have occurred across a sequencing dataset, and takes amino acid tables as
+input. These amino acid tables can come from a variety of sources, including:
+ - miptools (for MIP amplicon data): github.com/bailey-lab/miptools
+ - seekdeep (for illumina amplicon data): github.com/bailey-lab/seekdeep_AA
+ - nanopore (for nanopore amplicon or whole genome data): github.com/simkin-bioinformatics/clair3-nanopore
 
 ## Inputs and Outputs:
 This program takes as input three tables with samples as rows,
