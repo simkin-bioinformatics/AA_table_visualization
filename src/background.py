@@ -15,6 +15,19 @@ import PCA
 import math
 import subprocess
 
+def special_sort(mutations):
+	'''
+	Intersects the variants of interest with observed mutations from the AA tables
+	default sort will sort mutations by gene and then reference amino acid name (e.g. alanine before lysine) - this sorter instead
+	sorts by gene and then amino acid position
+	'''
+	sorting_list=[]
+	for mutation in mutations:
+		gene='-'.join(mutation.split('-')[:-1]).lower()
+		pos=int(mutation.split('-')[-1][3:-3]) #strip out amino acid names, leaving only positions
+		sorting_list.append([gene, pos, mutation]) #sort by position
+	return [item[-1] for item in sorted(sorting_list)] #return original mutation names, but now sorted by position
+
 def get_mutation_counts(mutation_count_file, mutation_coverage_file):
 	mutation_counts = pd.read_csv(mutation_count_file,
 								  header=list(range(6)),
@@ -24,7 +37,7 @@ def get_mutation_counts(mutation_count_file, mutation_coverage_file):
 									header=list(range(6)))
 	all_columns=list(mutation_counts.keys())
 	mutation_dict={column[2]:column_number for column_number, column in enumerate(all_columns) if column[3]=='missense_variant'}
-	filtered_mutations=list(mutation_dict.keys())
+	filtered_mutations=special_sort(list(mutation_dict.keys()))
 	return all_columns, mutation_dict, filtered_mutations, mutation_counts, mutation_coverage
 
 def get_metadata_columns(metadata_table, separator='\t'):
@@ -59,18 +72,6 @@ def generate_country_dropdown():
 	return country, country_shortcuts
 
 # RUN
-def special_sort(mutations):
-	'''
-	Intersects the variants of interest with observed mutations from the AA tables
-	default sort will sort mutations by gene and then reference amino acid name (e.g. alanine before lysine) - this sorter instead
-	sorts by gene and then amino acid position
-	'''
-	sorting_list=[]
-	for mutation in mutations:
-		gene='-'.join(mutation.split('-')[:-1]).lower()
-		pos=int(mutation.split('-')[-1][3:-3]) #strip out amino acid names, leaving only positions
-		sorting_list.append([gene, pos, mutation]) #sort by position
-	return [item[-1] for item in sorted(sorting_list)] #return original mutation names, but now sorted by position
 
 def create_prevalences_input_table(mutations_of_interest, mutation_dict, all_columns, mutation_counts, mutation_coverage, wdir, min_count, min_coverage, min_freq):
 	'''
