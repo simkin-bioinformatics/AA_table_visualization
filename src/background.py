@@ -27,8 +27,8 @@ def get_mutation_counts(mutation_count_file, mutation_coverage_file):
 	filtered_mutations=list(mutation_dict.keys())
 	return all_columns, mutation_dict, filtered_mutations, mutation_counts, mutation_coverage
 
-def get_metadata_columns(metadata_table):
-	metadata = pd.read_csv(metadata_table, sep='\t')
+def get_metadata_columns(metadata_table, separator='\t'):
+	metadata = pd.read_csv(metadata_table, sep=separator)
 	columns = list(metadata.keys())
 	return columns
 
@@ -138,7 +138,7 @@ def create_prevalences_input_table(mutations_of_interest, mutation_dict, all_col
 	# genotypes.head()
 	# prevalences_input.head()
 
-def calculate_prevalences(wdir, metadata_file, sample_column, summary_column, mutations_of_interest):
+def calculate_prevalences(wdir, metadata_file, sample_column, summary_column, mutations_of_interest, separator='\t'):
 	'''
 	calculates final mutation prevalences for the mutations of interest and outputs a prevalence table. More specifically:
 	prevalences_input_table = os.path.join(wdir, 'prevalences_input_table.csv')
@@ -153,7 +153,7 @@ def calculate_prevalences(wdir, metadata_file, sample_column, summary_column, mu
 	cap.calculate_prevalences(metadata_file,
 						  prevalences_input_table,
 						  mutations_of_interest,
-						  output_summary_table, sample_column, summary_column)
+						  output_summary_table, sample_column, summary_column, separator)
 	prevalences=pd.read_csv(output_summary_table,
 							  header=list(range(1)),
 							  index_col=0, sep='\t')

@@ -3,7 +3,7 @@ import plotly.express as px
 import json
 import pandas as pd
 
-def calculate_prevalences(metadata_file, prevalences_input_table, mutations, output_summary_table, sample_column, summarize_column):
+def calculate_prevalences(metadata_file, prevalences_input_table, mutations, output_summary_table, sample_column, summarize_column, separator='\t'):
 	def create_summary_dict(metadata_file, sample_column, summarize_column):
 		'''
 		returns a dictionary keyed by sample that returns a list of the
@@ -13,7 +13,7 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 		'''
 		summarize_dict = {}
 		for line_number, line in enumerate(open(metadata_file)):
-			line = line.strip().split('\t')
+			line = line.strip().split(separator)
 			if line_number==0:
 				sample_column = line.index(sample_column)
 				summarize_column = line.index(summarize_column)
