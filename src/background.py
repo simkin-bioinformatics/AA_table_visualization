@@ -139,13 +139,13 @@ def create_prevalences_input_table(mutations_of_interest, mutation_dict, all_col
 	# genotypes.head()
 	# prevalences_input.head()
 
-def calculate_prevalences(wdir, metadata_file, sample_column, summary_column, mutations_of_interest, separator='\t'):
+def calculate_prevalences(wdir, metadata_file, sample_counts_file, sample_column, summary_column, mutations_of_interest, separator='\t'):
 	'''
 	calculates final mutation prevalences for the mutations of interest and outputs a prevalence table. More specifically:
 	prevalences_input_table = os.path.join(wdir, 'prevalences_input_table.csv')
 	'''
 	output_summary_table = os.path.join(wdir, 'prevalence_summary.tsv')
-	prevalences_input_table = os.path.join(wdir, 'prevalences_input_table.csv')
+	prevalences_input_table = os.path.join(wdir, sample_counts_file)
 	# print('sample column is', sample_column)
 	# print('summary column is', summary_column)
 	first_line=open(metadata_file).readline()
