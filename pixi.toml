@@ -1,0 +1,32 @@
+[workspace]
+authors = ["Charlie Simkin <charlie.simkin@gmail.com>"]
+channels = ["conda-forge", "bioconda"]
+name = "AA_table_visualization"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+jlab-ts = '''
+plotly_get_chrome -y
+
+TS_HOSTNAME=$(tailscale status --self --json | jq -r '.Self.DNSName' | sed 's/\.$//')
+
+jupyter lab \
+  --ip=0.0.0.0 \
+  --no-browser \
+  --ServerApp.custom_display_url="http://$TS_HOSTNAME:8888" \
+  variant_graphing.ipynb
+'''
+
+[dependencies]
+jupyterlab = ">=4.5.7,<5"
+plotly = ">=6.6.0,<7"
+numpy = ">=2.4.6,<3"
+ipywidgets = ">=8.1.8,<9"
+pandas = ">=3.0.3,<4"
+scikit-learn = ">=1.8.0,<2"
+matplotlib = ">=3.10.9,<4"
+jq = ">=1.8.1,<2"
+
+[pypi-dependencies]
+kaleido = ">=1.3.0, <2"
