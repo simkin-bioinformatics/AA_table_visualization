@@ -14,6 +14,56 @@ import numpy as np
 import PCA
 import math
 import subprocess
+from functools import lru_cache
+
+@lru_cache(maxsize=None)
+def _load_geojson(geojson_file):
+	with open(geojson_file, 'r') as f:
+		return json.load(f)
+
+def _collect_geojson_coordinates(geometry, latitudes, longitudes):
+	geometry_type = geometry.get('type')
+	coordinates = geometry.get('coordinates', [])
+	if geometry_type == 'Point':
+		longitudes.append(coordinates[0])
+		latitudes.append(coordinates[1])
+	elif geometry_type in {'MultiPoint', 'LineString'}:
+		for longitude, latitude in coordinates:
+			longitudes.append(longitude)
+			latitudes.append(latitude)
+	elif geometry_type in {'MultiLineString', 'Polygon'}:
+		for line in coordinates:
+			for longitude, latitude in line:
+				longitudes.append(longitude)
+				latitudes.append(latitude)
+	elif geometry_type == 'MultiPolygon':
+		for polygon in coordinates:
+			for line in polygon:
+				for longitude, latitude in line:
+					longitudes.append(longitude)
+					latitudes.append(latitude)
+	elif geometry_type == 'GeometryCollection':
+		for child_geometry in geometry.get('geometries', []):
+			_collect_geojson_coordinates(child_geometry, latitudes, longitudes)
+
+def get_country_geo_ranges(country, padding_fraction=0.08, minimum_padding=0.25):
+	adm0_json = _load_geojson('input/geojson_files/ne_adm0_10m.geojson')
+	for entry in adm0_json['features']:
+		if entry['properties']['NAME_EN'] == country:
+			latitudes, longitudes = [], []
+			_collect_geojson_coordinates(entry['geometry'], latitudes, longitudes)
+			if not latitudes or not longitudes:
+				break
+			latitude_padding = max((max(latitudes) - min(latitudes)) * padding_fraction, minimum_padding)
+			longitude_padding = max((max(longitudes) - min(longitudes)) * padding_fraction, minimum_padding)
+			return (
+				[max(min(latitudes) - latitude_padding, -90), min(max(latitudes) + latitude_padding, 90)],
+				[max(min(longitudes) - longitude_padding, -180), min(max(longitudes) + longitude_padding, 180)]
+			)
+	raise ValueError(f'Could not find country {country!r} in input/geojson_files/ne_adm0_10m.geojson')
+
+def _should_auto_range(axis_range):
+	return axis_range is None or axis_range == 'auto'
 
 def special_sort(mutations):
 	'''
@@ -41,6 +91,7 @@ def get_mutation_counts(mutation_count_file, mutation_coverage_file):
 	return all_columns, mutation_dict, filtered_mutations, mutation_counts, mutation_coverage
 
 def get_metadata_columns(metadata_table, separator='\t'):
+	separator = cap.detect_separator(metadata_table, separator)
 	metadata = pd.read_csv(metadata_table, sep=separator)
 	columns = list(metadata.keys())
 	return columns
@@ -212,15 +263,14 @@ def make_detail_graph(variant, summary_column, wdir, zoom_level, latitude, longi
 
 def get_countries_from_geojson():
 	geojson_file = 'input/geojson_files/ne_adm0_10m.geojson'
-	with open(geojson_file,'r') as f:
-		adm0_json = json.load(f)
-		adm0_set = set()
-		for entry in adm0_json['features']:
-			country = entry['properties']['NAME_EN']
-			adm0_set.add(country)
-		adm0_list = list(adm0_set)
-		adm0_list.sort()
-		# print(adm0_list)
+	adm0_json = _load_geojson(geojson_file)
+	adm0_set = set()
+	for entry in adm0_json['features']:
+		country = entry['properties']['NAME_EN']
+		adm0_set.add(country)
+	adm0_list = list(adm0_set)
+	adm0_list.sort()
+	# print(adm0_list)
 
 	svg_country = widgets.Dropdown(
 			options=adm0_list,
@@ -241,7 +291,15 @@ def create_static_maps(
 	title_text,
 	title_size,
 	wdir,
-	summary_column):
+	summary_column,
+	write_files=False):
+	if _should_auto_range(latitude_range) or _should_auto_range(longitude_range):
+		auto_latitude_range, auto_longitude_range = get_country_geo_ranges(country_of_interest)
+		if _should_auto_range(latitude_range):
+			latitude_range = auto_latitude_range
+		if _should_auto_range(longitude_range):
+			longitude_range = auto_longitude_range
+
 	# prevalence parameters
 	prevalence_df = pd.read_csv(os.path.join(wdir, "prevalence_summary.tsv"), sep='\t')
 	prevalence_df["Prevalence"] = prevalence_df[variant_of_interest].str.split(" ").str[0].astype(float)
@@ -255,10 +313,9 @@ def create_static_maps(
 	fig = go.Figure()
 
 	def plot_lakes():
-		with open('input/geojson_files/ne_lakes_10m.geojson','r') as f:
-			lakes_json = json.load(f)
-			lakes_df = pd.json_normalize(lakes_json['features'])
-			lakes_df['graphing_status'] = 1
+		lakes_json = _load_geojson('input/geojson_files/ne_lakes_10m.geojson')
+		lakes_df = pd.json_normalize(lakes_json['features'])
+		lakes_df['graphing_status'] = 1
 
 		fig.add_choropleth(
 			locations=lakes_df['properties.name'],
@@ -274,10 +331,9 @@ def create_static_maps(
 
 	def plot_oceans():
 		# don't need to do this if you just set plot background to blue
-		with open('input/geojson_files/ne_ocean_10m.geojson','r') as f:
-			ocean_json = json.load(f)
-			ocean_df = pd.json_normalize(ocean_json['features'])
-			ocean_df['graphing_status'] = 1
+		ocean_json = _load_geojson('input/geojson_files/ne_ocean_10m.geojson')
+		ocean_df = pd.json_normalize(ocean_json['features'])
+		ocean_df['graphing_status'] = 1
 
 		fig.add_choropleth(
 			locations=ocean_df['properties.featurecla'],
@@ -292,11 +348,10 @@ def create_static_maps(
 		)
 
 	def plot_adm0(adm0_country):
-		with open('input/geojson_files/ne_adm0_10m.geojson','r') as f:
-			adm0_json = json.load(f)
-			adm0_df = pd.json_normalize(adm0_json['features'])
-			adm0_df['graphing_status'] = 0
-			adm0_df.loc[adm0_df['properties.NAME_EN'] == adm0_country, 'graphing_status'] = 1
+		adm0_json = _load_geojson('input/geojson_files/ne_adm0_10m.geojson')
+		adm0_df = pd.json_normalize(adm0_json['features'])
+		adm0_df['graphing_status'] = 0
+		adm0_df.loc[adm0_df['properties.NAME_EN'] == adm0_country, 'graphing_status'] = 1
 
 		fig.add_choropleth(
 			locations=adm0_df['properties.NAME_EN'],
@@ -311,15 +366,14 @@ def create_static_maps(
 		)
 
 	def plot_adm1(adm1_country):
-		with open('input/geojson_files/ne_adm1_10m.geojson', 'r') as f:
-			adm1_json = json.load(f)
-			adm1_json_filtered = adm1_json.copy()
-			adm1_json_filtered['features'] = []
-			for entry in adm1_json['features']:
-				if entry['properties']['admin'] == adm1_country:
-					adm1_json_filtered['features'].append(entry)
-			adm1_df = pd.json_normalize(adm1_json_filtered['features'])
-			adm1_df['graphing_status'] = 1
+		adm1_json = _load_geojson('input/geojson_files/ne_adm1_10m.geojson')
+		adm1_json_filtered = adm1_json.copy()
+		adm1_json_filtered['features'] = []
+		for entry in adm1_json['features']:
+			if entry['properties']['admin'] == adm1_country:
+				adm1_json_filtered['features'].append(entry)
+		adm1_df = pd.json_normalize(adm1_json_filtered['features'])
+		adm1_df['graphing_status'] = 1
 		if adm1_json_filtered['features'] != []:
 			fig.add_choropleth(
 				locations=adm1_df['properties.adm1_code'],
@@ -392,9 +446,11 @@ def create_static_maps(
 		title=dict(text=title_text, font=dict(size=title_size), automargin=True, yref='paper')
 	)
 
-	subprocess.call(['mkdir', '-p', os.path.join(wdir, 'static_svg_files')])
-	fig.write_image(os.path.join(wdir, 'static_svg_files', variant_of_interest+".svg"))
-	fig.write_image(os.path.join(wdir, 'static_svg_files', variant_of_interest+".png"))
-	fig.write_html(os.path.join(wdir, 'static_svg_files', variant_of_interest+".html"))
+	if write_files:
+		static_map_folder = os.path.join(wdir, 'static_svg_files')
+		os.makedirs(static_map_folder, exist_ok=True)
+		fig.write_image(os.path.join(static_map_folder, variant_of_interest+".svg"))
+		fig.write_image(os.path.join(static_map_folder, variant_of_interest+".png"))
+		fig.write_html(os.path.join(static_map_folder, variant_of_interest+".html"))
 
 	return fig

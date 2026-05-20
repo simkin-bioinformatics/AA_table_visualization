@@ -11,29 +11,22 @@ def call_genotypes(count_table, coverage_table, min_count,
     """Calls genotypes filtered by tallies and calculates prevalences""" 
     # filter mutation counts for minimum count parameter
     # by setting counts to zero if it is below threshold
-    filtered_mutation_counts = count_table.applymap(
-        lambda x: 0 if x < min_count else x)
+    filtered_mutation_counts = count_table.where(count_table >= min_count, 0)
     # filter loci without enough coverage by setting
     # coverage to zero if it is below threshold
-    filtered_mutation_coverage = coverage_table.applymap(
-        lambda x: 0 if x < min_coverage else x)
+    filtered_mutation_coverage = coverage_table.where(
+        coverage_table >= min_coverage, 0)
     # calculate within sample frequency
     freq = filtered_mutation_counts / filtered_mutation_coverage
     freq.replace(np.inf, np.nan, inplace=True)
     # call genotypes using the minimum within sample
     # allele frequency parameter
-    genotypes = freq.applymap(
-        lambda x: np.nan if (np.isnan(x) or np.isinf(x))
-        else 0 if x == 0
-        else 0 if x < min_freq
-        else 1 if x < (1 - min_freq)
-        else 2).sort_index(axis=1)
+    genotypes = freq.where(freq.isna(), 0)
+    genotypes = genotypes.mask(freq >= min_freq, 1)
+    genotypes = genotypes.mask(freq >= (1 - min_freq), 2).sort_index(axis=1)
     # calculate prevalences
-    prev = freq.applymap(
-        lambda x: np.nan if (np.isnan(x) or np.isinf(x))
-        else 0 if x == 0
-        else 0 if x < min_freq
-        else 1).sort_index(axis=1)
+    prev = freq.where(freq.isna(), 0)
+    prev = prev.mask(freq >= min_freq, 1).sort_index(axis=1)
     return {"genotypes": genotypes, "prevalences": prev, "wsaf": freq,
             "filtered_mutation_counts": filtered_mutation_counts,
             "filtered_mutation_coverage": filtered_mutation_coverage}

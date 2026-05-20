@@ -3,6 +3,15 @@ import plotly.express as px
 import json
 import pandas as pd
 
+def detect_separator(metadata_file, separator='\t'):
+	first_line = open(metadata_file).readline()
+	if separator and len(first_line.rstrip('\n').split(separator)) > 1:
+		return separator
+	for candidate in [',', '\t', ';']:
+		if len(first_line.rstrip('\n').split(candidate)) > 1:
+			return candidate
+	return separator
+
 def calculate_prevalences(metadata_file, prevalences_input_table, mutations, output_summary_table, sample_column, summarize_column, separator='\t'):
 	def create_summary_dict(metadata_file, sample_column, summarize_column):
 		'''
@@ -12,15 +21,23 @@ def calculate_prevalences(metadata_file, prevalences_input_table, mutations, out
 		named 'Latitude' and 'Longitude'
 		'''
 		summarize_dict = {}
-		for line_number, line in enumerate(open(metadata_file)):
-			line = line.strip().split(separator)
-			if line_number==0:
-				sample_column = line.index(sample_column)
-				summarize_column = line.index(summarize_column)
-				latitude=line.index('Latitude')
-				longitude=line.index('Longitude')
-			if line_number > 0: #discard header
-				summarize_dict[line[sample_column]] = [line[summarize_column], float(line[latitude]), float(line[longitude])]
+		metadata_separator = detect_separator(metadata_file, separator)
+		metadata = pd.read_csv(metadata_file, sep=metadata_separator)
+		metadata.columns = [str(column).lstrip('\ufeff') for column in metadata.columns]
+		required_columns = [sample_column, summarize_column, 'Latitude', 'Longitude']
+		missing_columns = [column for column in required_columns if column not in metadata.columns]
+		if missing_columns:
+			raise ValueError(
+				f"Metadata file {metadata_file} is missing required column(s): {missing_columns}. "
+				f"Parsed columns are: {list(metadata.columns)}. "
+				f"Detected separator: {repr(metadata_separator)}."
+			)
+		for _, row in metadata.iterrows():
+			summarize_dict[row[sample_column]] = [
+				row[summarize_column],
+				float(row['Latitude']),
+				float(row['Longitude'])
+			]
 		return summarize_dict
 
 	def get_counts(prevalences_input_table, summary_dict):
