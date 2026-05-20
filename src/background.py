@@ -15,11 +15,65 @@ import PCA
 import math
 import subprocess
 from functools import lru_cache
+from urllib.request import urlopen
+
+COUNTRIES_GEOJSON_URL = (
+	"https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+	"geojson/ne_50m_admin_0_countries.geojson"
+)
+OCEAN_GEOJSON_URL = (
+	"https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+	"geojson/ne_50m_ocean.geojson"
+)
+LOCAL_COUNTRIES_GEOJSON = 'input/geojson_files/ne_adm0_10m.geojson'
 
 @lru_cache(maxsize=None)
 def _load_geojson(geojson_file):
 	with open(geojson_file, 'r') as f:
 		return json.load(f)
+
+@lru_cache(maxsize=1)
+def _load_countries_geojson():
+	try:
+		with urlopen(COUNTRIES_GEOJSON_URL, timeout=10) as response:
+			return json.load(response)
+	except Exception:
+		return _load_geojson(LOCAL_COUNTRIES_GEOJSON)
+
+def _country_name(feature):
+	properties = feature.get('properties', {})
+	return (
+		properties.get('NAME')
+		or properties.get('NAME_EN')
+		or properties.get('ADMIN')
+		or properties.get('NAME_LONG')
+	)
+
+def _country_feature(country):
+	for feature in _load_countries_geojson()['features']:
+		if _country_name(feature) == country:
+			return feature
+	return None
+
+@lru_cache(maxsize=1)
+def _country_label_data():
+	labels = []
+	for feature in _load_countries_geojson()['features']:
+		country = _country_name(feature)
+		if not country:
+			continue
+		properties = feature.get('properties', {})
+		longitude = properties.get('LABEL_X')
+		latitude = properties.get('LABEL_Y')
+		if longitude is None or latitude is None:
+			latitudes, longitudes = [], []
+			_collect_geojson_coordinates(feature['geometry'], latitudes, longitudes)
+			if not latitudes or not longitudes:
+				continue
+			longitude = (min(longitudes) + max(longitudes)) / 2
+			latitude = (min(latitudes) + max(latitudes)) / 2
+		labels.append((country, latitude, longitude))
+	return labels
 
 def _collect_geojson_coordinates(geometry, latitudes, longitudes):
 	geometry_type = geometry.get('type')
@@ -46,10 +100,53 @@ def _collect_geojson_coordinates(geometry, latitudes, longitudes):
 		for child_geometry in geometry.get('geometries', []):
 			_collect_geojson_coordinates(child_geometry, latitudes, longitudes)
 
+def _feature_intersects_bounds(feature, latitude_range, longitude_range):
+	latitudes, longitudes = [], []
+	_collect_geojson_coordinates(feature['geometry'], latitudes, longitudes)
+	if not latitudes or not longitudes:
+		return False
+	return (
+		min(latitudes) <= max(latitude_range)
+		and max(latitudes) >= min(latitude_range)
+		and min(longitudes) <= max(longitude_range)
+		and max(longitudes) >= min(longitude_range)
+	)
+
+@lru_cache(maxsize=None)
+def _load_geojson_in_bounds(geojson_file, latitude_range_key, longitude_range_key):
+	geojson = _load_geojson(geojson_file)
+	return _filter_geojson_in_bounds(geojson, latitude_range_key, longitude_range_key)
+
+def _filter_geojson_in_bounds(geojson, latitude_range_key, longitude_range_key):
+	latitude_range = list(latitude_range_key)
+	longitude_range = list(longitude_range_key)
+	return {
+		**geojson,
+		'features': [
+			feature for feature in geojson['features']
+			if _feature_intersects_bounds(feature, latitude_range, longitude_range)
+		]
+	}
+
+def _range_cache_key(axis_range):
+	return tuple(round(float(value), 6) for value in axis_range)
+
+def _padded_bounds_from_center(latitude, longitude, zoom_level, padding_factor=1.5):
+	span = max(0.5, 2 ** (8.5 - zoom_level))
+	latitude_range = [
+		max(latitude - span * padding_factor / 2, -90),
+		min(latitude + span * padding_factor / 2, 90),
+	]
+	longitude_range = [
+		max(longitude - span * padding_factor / 2, -180),
+		min(longitude + span * padding_factor / 2, 180),
+	]
+	return _range_cache_key(latitude_range), _range_cache_key(longitude_range)
+
 def get_country_geo_ranges(country, padding_fraction=0.08, minimum_padding=0.25):
-	adm0_json = _load_geojson('input/geojson_files/ne_adm0_10m.geojson')
+	adm0_json = _load_countries_geojson()
 	for entry in adm0_json['features']:
-		if entry['properties']['NAME_EN'] == country:
+		if _country_name(entry) == country:
 			latitudes, longitudes = [], []
 			_collect_geojson_coordinates(entry['geometry'], latitudes, longitudes)
 			if not latitudes or not longitudes:
@@ -60,7 +157,27 @@ def get_country_geo_ranges(country, padding_fraction=0.08, minimum_padding=0.25)
 				[max(min(latitudes) - latitude_padding, -90), min(max(latitudes) + latitude_padding, 90)],
 				[max(min(longitudes) - longitude_padding, -180), min(max(longitudes) + longitude_padding, 180)]
 			)
-	raise ValueError(f'Could not find country {country!r} in input/geojson_files/ne_adm0_10m.geojson')
+	raise ValueError(f'Could not find country {country!r} in countries GeoJSON')
+
+def _zoom_for_bounds(latitude_range, longitude_range):
+	latitude_span = max(latitude_range) - min(latitude_range)
+	longitude_span = max(longitude_range) - min(longitude_range)
+	largest_span = max(latitude_span, longitude_span, 0.01)
+	return max(1, min(9, 8.5 - math.log2(largest_span)))
+
+def get_country_map_view(country):
+	latitude_range, longitude_range = get_country_geo_ranges(country)
+	return {
+		'lat': sum(latitude_range) / 2,
+		'lon': sum(longitude_range) / 2,
+		'zoom': _zoom_for_bounds(latitude_range, longitude_range),
+		'bounds': {
+			'south': min(latitude_range),
+			'north': max(latitude_range),
+			'west': min(longitude_range),
+			'east': max(longitude_range),
+		},
+	}
 
 def _should_auto_range(axis_range):
 	return axis_range is None or axis_range == 'auto'
@@ -97,29 +214,20 @@ def get_metadata_columns(metadata_table, separator='\t'):
 	return columns
 
 def generate_country_dropdown():
-	country_shortcuts={
-		'DRC': {
-			"lat": -1.6815695315287824,
-			"lon": 22.744896416745945,
-			'zoom': 3.8
-		},
-		'Uganda': {
-			"lat": 1.5,
-			'lon': 32,
-			'zoom': 5.6
-		},
-		'Tanzania': {
-			"lat": -5.7,
-			"lon": 35,
-			'zoom': 5.2
-		},
-	}
+	countries_json = _load_countries_geojson()
+	country_names = sorted(
+		country for country in {_country_name(feature) for feature in countries_json['features']}
+		if country
+	)
+	country_shortcuts = {country: get_country_map_view(country) for country in country_names}
 
 	country = widgets.Dropdown(
-		options=country_shortcuts.keys(),
+		options=country_names,
 		description='Country:',
 		disabled=False,
 	)
+	if 'Uganda' in country_names:
+		country.value = 'Uganda'
 	return country, country_shortcuts
 
 # RUN
@@ -212,54 +320,445 @@ def calculate_prevalences(wdir, metadata_file, sample_counts_file, sample_column
 	return prevalences
 
 
-def make_detail_graph(variant, summary_column, wdir, zoom_level, latitude, longitude):
-	df = pd.read_csv(os.path.join(wdir, "prevalence_summary.tsv"), sep='\t')
-	if variant in list(df)[3:]:
-		df["prevalence"] = df[variant].str.split(" ").str[0].astype(float)
-		#df["prevalence_percent"] = df["prevalence"]*100+1
-		#df["prevalence_log"]=np.log2(df["prevalence_percent"])
-		max_prevalence = max(df["prevalence"].to_list())
-		#max_prevalence=7
-		#max_prevalence=1.0
-		df["sample_size"] = (
-			df[variant].str.split("/").str[1].str.replace(")", "").astype(float)
+def add_countries_only_layer(
+	fig,
+	chosen_country=None,
+	overlay_water=False,
+	highlight_chosen_country=True,
+	country_bounds=None,
+	latitude=None,
+	longitude=None,
+	zoom_level=None):
+	map_layers = [
+		{
+			"sourcetype": "geojson",
+			"source": {
+				"type": "FeatureCollection",
+				"features": [
+					{
+						"type": "Feature",
+						"geometry": {
+							"type": "Polygon",
+							"coordinates": [[
+								[-180, -90],
+								[180, -90],
+								[180, 90],
+								[-180, 90],
+								[-180, -90],
+							]],
+						},
+						"properties": {},
+					}
+				],
+			},
+			"type": "fill",
+			"color": "lightblue",
+			"below": "traces",
+		}
+	]
+	if overlay_water and country_bounds is not None:
+		latitude_span = country_bounds['north'] - country_bounds['south']
+		longitude_span = country_bounds['east'] - country_bounds['west']
+		latitude_padding = max(latitude_span * 0.15, 0.25)
+		longitude_padding = max(longitude_span * 0.15, 0.25)
+		latitude_range_key = _range_cache_key([
+			max(country_bounds['south'] - latitude_padding, -90),
+			min(country_bounds['north'] + latitude_padding, 90),
+		])
+		longitude_range_key = _range_cache_key([
+			max(country_bounds['west'] - longitude_padding, -180),
+			min(country_bounds['east'] + longitude_padding, 180),
+		])
+	elif overlay_water and latitude is not None and longitude is not None and zoom_level is not None:
+		latitude_range_key, longitude_range_key = _padded_bounds_from_center(latitude, longitude, zoom_level, padding_factor=0.8)
+	else:
+		latitude_range_key = None
+		longitude_range_key = None
+	if overlay_water and latitude_range_key is not None and longitude_range_key is not None:
+		water_layers = []
+		lake_layers = [
+			{
+				"sourcetype": "geojson",
+				"source": _load_geojson_in_bounds(
+					'input/geojson_files/ne_lakes_10m.geojson',
+					latitude_range_key,
+					longitude_range_key
+				),
+				"type": "fill",
+				"color": "lightblue",
+				"below": "traces",
+			},
+		]
+	else:
+		water_layers = []
+		lake_layers = []
+	map_layers.extend(water_layers)
+	map_layers.append(
+		{
+			"sourcetype": "geojson",
+			"source": COUNTRIES_GEOJSON_URL,
+			"type": "fill",
+			"color": "lightgray",
+			"below": "traces",
+		}
+	)
+	chosen_feature = _country_feature(chosen_country) if highlight_chosen_country and chosen_country is not None else None
+	if chosen_feature is not None:
+		map_layers.append(
+			{
+				"sourcetype": "geojson",
+				"source": {"type": "FeatureCollection", "features": [chosen_feature]},
+				"type": "fill",
+				"color": "white",
+				"below": "traces",
+			}
 		)
-		df = df[df["sample_size"] > 0]
-		# df = df[df["Dataset"] == int(dataset)]
-
-		fig = px.scatter_map(
-			df,
-			lat="Latitude",
-			lon="Longitude",
-			#color="prevalence_log",
-			color="prevalence",
-			size="sample_size",
-			size_max=50,
-			# color_continuous_scale='cividis',
-			range_color=(0, max_prevalence), # use this to make the most prevalent mutation "pop" as bright yellow
-			zoom=zoom_level,
-			hover_name=summary_column,
-			height=800,
-			width=800,
-			hover_data=["sample_size"],
-			center={"lat": latitude, "lon": longitude},
-			title=variant+'_'+summary_column+'_0-'+str(max_prevalence),
-		)
+	map_layers.extend(lake_layers)
+	map_layers.append(
+		{
+			"sourcetype": "geojson",
+			"source": COUNTRIES_GEOJSON_URL,
+			"type": "line",
+			"color": "black",
+			"line": {"width": 1},
+			"below": "traces",
+		}
+	)
 	fig.update_layout(
-		mapbox=dict(
-			layers=[
-				dict(
-					sourcetype="geojson",
-					source={"type": "FeatureCollection", "features": []},
-					type="fill",
-					color="blue",
-					below="traces",
-					visible=False  # Hide the layer by default
-				)
-			]
+		map_style="white-bg",
+		map_layers=map_layers
+	)
+	country_labels = _country_label_data()
+	fig.add_trace(
+		go.Scattermap(
+			lon=[label[2] for label in country_labels],
+			lat=[label[1] for label in country_labels],
+			text=[label[0] for label in country_labels],
+			mode="text",
+			textfont=dict(size=8, color="dimgray"),
+			hoverinfo="skip",
+			showlegend=False,
 		)
 	)
+	fig.data = (fig.data[-1],) + fig.data[:-1]
 	return fig
+
+def _detail_prevalence_df(variant, summary_column, wdir):
+	df = pd.read_csv(os.path.join(wdir, "prevalence_summary.tsv"), sep='\t')
+	if variant not in list(df)[3:]:
+		raise ValueError(f'{variant!r} is not found in prevalence_summary.tsv')
+	df["prevalence"] = df[variant].str.split(" ").str[0].astype(float)
+	df["sample_size"] = (
+		df[variant].str.split("/").str[1].str.replace(")", "").astype(float)
+	)
+	df = df[df["sample_size"] > 0].copy()
+	df["point_label"] = (
+		df[summary_column].astype(str)
+		+ ", "
+		+ df["sample_size"].astype("Int64").astype(str)
+		+ ", "
+		+ df["prevalence"].astype(str)
+	)
+	return df
+
+def make_detail_graph(
+	variant,
+	summary_column,
+	wdir,
+	zoom_level,
+	latitude,
+	longitude,
+	country_bounds=None,
+	chosen_country=None,
+	overlay_water=False,
+	highlight_chosen_country=True,
+	use_geojson=True,
+	use_country_geojson=None):
+	if use_country_geojson is not None:
+		use_geojson = use_country_geojson
+	df = _detail_prevalence_df(variant, summary_column, wdir)
+		#df["prevalence_percent"] = df["prevalence"]*100+1
+		#df["prevalence_log"]=np.log2(df["prevalence_percent"])
+	max_prevalence = max(df["prevalence"].to_list())
+		#max_prevalence=7
+		#max_prevalence=1.0
+		# df = df[df["Dataset"] == int(dataset)]
+
+	fig = px.scatter_map(
+		df,
+		lat="Latitude",
+		lon="Longitude",
+		#color="prevalence_log",
+		color="prevalence",
+		size="sample_size",
+		size_max=50,
+		# color_continuous_scale='cividis',
+		range_color=(0, max_prevalence), # use this to make the most prevalent mutation "pop" as bright yellow
+		zoom=zoom_level,
+		hover_name=summary_column,
+		text="point_label",
+		height=800,
+		width=800,
+		hover_data=["sample_size"],
+		center={"lat": latitude, "lon": longitude},
+		title=variant+'_'+summary_column+'_0-'+str(max_prevalence),
+	)
+	fig.update_traces(
+		mode="markers+text",
+		textposition="middle right",
+		textfont=dict(size=10, color="black"),
+	)
+	if use_geojson:
+		fig = add_countries_only_layer(
+				fig,
+				chosen_country,
+				overlay_water=overlay_water,
+				highlight_chosen_country=highlight_chosen_country,
+				country_bounds=country_bounds,
+			latitude=latitude,
+			longitude=longitude,
+			zoom_level=zoom_level
+		)
+	else:
+		fig.update_layout(map_style="open-street-map")
+	return fig
+
+def make_detail_graph_vector(
+	variant,
+	summary_column,
+	wdir,
+	country_bounds=None,
+	chosen_country=None,
+	overlay_water=False,
+	highlight_chosen_country=True,
+	width=800,
+	height=800):
+	df = _detail_prevalence_df(variant, summary_column, wdir)
+	max_prevalence = max(df["prevalence"].to_list())
+	countries_json = _load_countries_geojson()
+	country_names = [_country_name(feature) for feature in countries_json['features']]
+
+	fig = go.Figure()
+	fig.add_choropleth(
+		locations=country_names,
+		z=[0] * len(country_names),
+		locationmode='geojson-id',
+		geojson=countries_json,
+		featureidkey='properties.NAME',
+		colorscale=['lightgray', 'lightgray'],
+		marker_line_color='black',
+		marker_line_width=0.5,
+		showscale=False,
+	)
+
+	chosen_feature = _country_feature(chosen_country) if highlight_chosen_country and chosen_country is not None else None
+	if chosen_feature is not None:
+		fig.add_choropleth(
+			locations=[_country_name(chosen_feature)],
+			z=[1],
+			locationmode='geojson-id',
+			geojson={"type": "FeatureCollection", "features": [chosen_feature]},
+			featureidkey='properties.NAME',
+			colorscale=['white', 'white'],
+			marker_line_color='black',
+			marker_line_width=0.5,
+			showscale=False,
+		)
+
+	if overlay_water and country_bounds is not None:
+		latitude_span = country_bounds['north'] - country_bounds['south']
+		longitude_span = country_bounds['east'] - country_bounds['west']
+		latitude_padding = max(latitude_span * 0.15, 0.25)
+		longitude_padding = max(longitude_span * 0.15, 0.25)
+		latitude_range_key = _range_cache_key([
+			max(country_bounds['south'] - latitude_padding, -90),
+			min(country_bounds['north'] + latitude_padding, 90),
+		])
+		longitude_range_key = _range_cache_key([
+			max(country_bounds['west'] - longitude_padding, -180),
+			min(country_bounds['east'] + longitude_padding, 180),
+		])
+		lakes_json = _load_geojson_in_bounds(
+			'input/geojson_files/ne_lakes_10m.geojson',
+			latitude_range_key,
+			longitude_range_key
+		)
+		if lakes_json['features']:
+			lake_names = [
+				feature.get('properties', {}).get('name') or str(index)
+				for index, feature in enumerate(lakes_json['features'])
+			]
+			for lake_name, feature in zip(lake_names, lakes_json['features']):
+				feature.setdefault('properties', {})['plot_id'] = lake_name
+			fig.add_choropleth(
+				locations=lake_names,
+				z=[0] * len(lake_names),
+				locationmode='geojson-id',
+				geojson=lakes_json,
+				featureidkey='properties.plot_id',
+				colorscale=['lightblue', 'lightblue'],
+				marker_line_color='lightblue',
+				marker_line_width=0,
+				showscale=False,
+			)
+
+	country_labels = _country_label_data()
+	fig.add_scattergeo(
+		lon=[label[2] for label in country_labels],
+		lat=[label[1] for label in country_labels],
+		text=[label[0] for label in country_labels],
+		mode='text',
+		textfont=dict(size=8, color='dimgray'),
+		hoverinfo='skip',
+		showlegend=False,
+	)
+
+	fig.add_scattergeo(
+		lon=df["Longitude"],
+		lat=df["Latitude"],
+		text=df["point_label"],
+		mode='markers+text',
+		textposition='middle right',
+		textfont=dict(size=10, color='black'),
+		marker=dict(
+			color=df["prevalence"],
+			size=df["sample_size"],
+			sizemode='area',
+			cmin=0,
+			cmax=max_prevalence,
+			showscale=True,
+			colorbar=dict(title='prevalence'),
+		),
+		hovertext=df[summary_column],
+		showlegend=False,
+	)
+
+	if country_bounds is not None:
+		lat_range = [country_bounds['south'], country_bounds['north']]
+		lon_range = [country_bounds['west'], country_bounds['east']]
+	else:
+		lat_range = [df["Latitude"].min() - 1, df["Latitude"].max() + 1]
+		lon_range = [df["Longitude"].min() - 1, df["Longitude"].max() + 1]
+	fig.update_geos(
+		lataxis_range=lat_range,
+		lonaxis_range=lon_range,
+		visible=False,
+		bgcolor='lightblue',
+	)
+	fig.update_layout(
+		width=width,
+		height=height,
+		margin=dict(l=10, r=10, t=40, b=10),
+		title=variant+'_'+summary_column+'_0-'+str(max_prevalence),
+	)
+	return fig
+
+def write_detail_graph_files(
+	fig,
+	output_folder,
+	title_string,
+	variant,
+	summary_column,
+	country_bounds=None,
+	chosen_country=None,
+	overlay_water=False,
+	highlight_chosen_country=True):
+	write_detail_graph_vector_files(
+		variant,
+		summary_column,
+		output_folder,
+		title_string,
+		country_bounds=country_bounds,
+		chosen_country=chosen_country,
+		overlay_water=overlay_water,
+		highlight_chosen_country=highlight_chosen_country,
+		width=fig.layout.width or 800,
+		height=fig.layout.height or 800,
+	)
+	fig.write_html(os.path.join(output_folder, title_string+'.html'))
+
+def write_detail_graph_vector_files(
+	variant,
+	summary_column,
+	wdir,
+	title_string,
+	country_bounds=None,
+	chosen_country=None,
+	overlay_water=False,
+	highlight_chosen_country=True,
+	width=800,
+	height=800):
+	import geopandas as gpd
+	import matplotlib.pyplot as plt
+
+	df = _detail_prevalence_df(variant, summary_column, wdir)
+	countries = gpd.read_file(LOCAL_COUNTRIES_GEOJSON)
+	if country_bounds is not None:
+		west = country_bounds['west']
+		east = country_bounds['east']
+		south = country_bounds['south']
+		north = country_bounds['north']
+	else:
+		west = df["Longitude"].min() - 1
+		east = df["Longitude"].max() + 1
+		south = df["Latitude"].min() - 1
+		north = df["Latitude"].max() + 1
+	countries = countries.cx[west:east, south:north]
+
+	fig_size = (width / 100, height / 100)
+	mpl_fig, ax = plt.subplots(figsize=fig_size)
+	ax.set_facecolor('lightblue')
+	countries.plot(ax=ax, color='lightgray', edgecolor='none', linewidth=0)
+	if highlight_chosen_country and chosen_country is not None:
+		name_columns = [column for column in ['NAME', 'NAME_EN', 'ADMIN', 'NAME_LONG'] if column in countries.columns]
+		if name_columns:
+			mask = False
+			for column in name_columns:
+				mask = mask | (countries[column] == chosen_country)
+			countries[mask].plot(ax=ax, color='white', edgecolor='none', linewidth=0)
+	if overlay_water:
+		lakes = gpd.read_file('input/geojson_files/ne_lakes_10m.geojson')
+		lakes = lakes.cx[west:east, south:north]
+		if not lakes.empty:
+			lakes.plot(ax=ax, color='lightblue', edgecolor='lightblue', linewidth=0)
+	countries.boundary.plot(ax=ax, color='black', linewidth=0.5)
+
+	for country_name, label_latitude, label_longitude in _country_label_data():
+		if west <= label_longitude <= east and south <= label_latitude <= north:
+			ax.text(label_longitude, label_latitude, country_name, fontsize=8, color='dimgray', ha='center', va='center')
+
+	sizes = df["sample_size"].clip(lower=1) * 8
+	points = ax.scatter(
+		df["Longitude"],
+		df["Latitude"],
+		c=df["prevalence"],
+		s=sizes,
+		cmap='viridis',
+		vmin=0,
+		vmax=max(df["prevalence"].max(), 1e-9),
+		edgecolors='black',
+		linewidths=0.5,
+	)
+	for _, row in df.iterrows():
+		ax.annotate(
+			row["point_label"],
+			(row["Longitude"], row["Latitude"]),
+			textcoords='offset points',
+			xytext=(8, 0),
+			ha='left',
+			va='center',
+			fontsize=10,
+			color='black',
+		)
+	mpl_fig.colorbar(points, ax=ax, label='prevalence', fraction=0.035, pad=0.02)
+	ax.set_xlim(west, east)
+	ax.set_ylim(south, north)
+	ax.set_axis_off()
+	ax.set_title(variant+'_'+summary_column+'_0-'+str(max(df["prevalence"].to_list())))
+	mpl_fig.tight_layout()
+	mpl_fig.savefig(os.path.join(wdir, title_string+'.svg'), format='svg')
+	mpl_fig.savefig(os.path.join(wdir, title_string+'.png'), dpi=300)
+	plt.close(mpl_fig)
 
 def get_countries_from_geojson():
 	geojson_file = 'input/geojson_files/ne_adm0_10m.geojson'
@@ -299,6 +798,8 @@ def create_static_maps(
 			latitude_range = auto_latitude_range
 		if _should_auto_range(longitude_range):
 			longitude_range = auto_longitude_range
+	latitude_range_key = _range_cache_key(latitude_range)
+	longitude_range_key = _range_cache_key(longitude_range)
 
 	# prevalence parameters
 	prevalence_df = pd.read_csv(os.path.join(wdir, "prevalence_summary.tsv"), sep='\t')
@@ -313,7 +814,13 @@ def create_static_maps(
 	fig = go.Figure()
 
 	def plot_lakes():
-		lakes_json = _load_geojson('input/geojson_files/ne_lakes_10m.geojson')
+		lakes_json = _load_geojson_in_bounds(
+			'input/geojson_files/ne_lakes_10m.geojson',
+			latitude_range_key,
+			longitude_range_key
+		)
+		if not lakes_json['features']:
+			return
 		lakes_df = pd.json_normalize(lakes_json['features'])
 		lakes_df['graphing_status'] = 1
 
@@ -348,7 +855,11 @@ def create_static_maps(
 		)
 
 	def plot_adm0(adm0_country):
-		adm0_json = _load_geojson('input/geojson_files/ne_adm0_10m.geojson')
+		adm0_json = _load_geojson_in_bounds(
+			'input/geojson_files/ne_adm0_10m.geojson',
+			latitude_range_key,
+			longitude_range_key
+		)
 		adm0_df = pd.json_normalize(adm0_json['features'])
 		adm0_df['graphing_status'] = 0
 		adm0_df.loc[adm0_df['properties.NAME_EN'] == adm0_country, 'graphing_status'] = 1
